@@ -1,0 +1,10 @@
+# build artifacts
+dist/
+build/
+__pycache__/
+*.spec
+*.pyc
+icon.ico
+
+# config (personal paths / hotkeys)
+config.json
