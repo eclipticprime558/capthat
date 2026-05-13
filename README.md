@@ -59,7 +59,7 @@ All hotkeys are configurable. Leave one blank to disable it.
 ### After capture
 - **Path to clipboard** — always copies the file path (paste into Claude Code)
 - **Also copy image** — optionally also copies the raw image data (for pasting into other apps)
-- **Preview thumbnail** — small pop-up in the bottom-right corner; click to open the file
+- **Preview thumbnail** — small pop-up in the bottom-right corner; click to open the file, right-click for Settings
 - **Auto-open** — immediately opens the file in your default image viewer
 
 ### Overlay
@@ -67,7 +67,7 @@ All hotkeys are configurable. Leave one blank to disable it.
 - **Crosshair color** — color picker for the selection rectangle
 
 ### System
-- **Recent captures** — tray submenu shows last 5 captures; click any to copy its path again
+- **Recent captures** — tray menu shows last 5 captures; click any to copy its path again
 - **History size** — keep 1–50 paths in the recent list
 - **Start with Windows** — one toggle writes the registry Run key
 - **Single instance** — re-running pops a reminder instead of opening twice
@@ -80,9 +80,10 @@ Capture Full Screen
 Capture Active Window
 Repeat Last Capture
 ────────────────────
-Recent Captures  ▶       latest.png
-                         20250508_142301.png
-                         …
+latest.png
+20250508_142301.png
+…
+────────────────────
 Open Screenshots Folder
 ────────────────────
 Settings
@@ -105,7 +106,7 @@ Exit
 
 ```
 pillow       image capture, processing, icon rendering
-keyboard     global hotkey registration + suppression
+keyboard     global hotkey registration
 pyperclip    clipboard (path string)
 pystray      Windows system tray
 plyer        toast notifications
@@ -121,7 +122,7 @@ pip install -r requirements.txt
 build.bat
 ```
 
-Runs PyInstaller, generates `icon.ico`, outputs `dist\CaptThat.exe` — single portable file, no Python needed on the target machine.
+Runs PyInstaller with `CaptThat.spec`, outputs `dist\CaptThat.exe` — single portable file, no Python needed on the target machine.
 
 ## Tips
 
@@ -130,6 +131,26 @@ Runs PyInstaller, generates `icon.ico`, outputs `dist\CaptThat.exe` — single p
 - **Shift+PrtScn** (repeat last) lets you re-capture the same region after changing something on screen — no re-selecting.
 - With **copy image to clipboard** on, one screenshot gives you both the path (for Claude Code) and the image data (for pasting into Slack, Word, etc.).
 - The **magnifier** uses nearest-neighbor zoom so you can see individual pixels — useful for aligning edges precisely.
+- **Right-click the preview thumbnail** to open Settings without going to the tray.
+
+## Changelog
+
+### v1.2.0
+- **Icon redesign** — 8× supersampled rendering, 3-ring lens with wide gaps (readable at 16 px), richer gradient; multi-size ICO (8 sizes, 16–256 px including 96 px for HiDPI); icon file stored in `%AppData%\CaptThat\` so it never lands next to the EXE
+- **Tray right-click fixed** — removed callable submenu that broke the Windows tray context menu; recent captures now listed inline
+- **Preview right-click** — right-clicking the post-capture thumbnail opens a context menu with "Open file" and "Settings…"
+- **Overlay guard** — `<Destroy>` binding on the selection overlay resets the open-flag if the window is closed externally, preventing a stuck state where PrtScn appeared to do nothing
+- **Dark title bar** — Settings window now uses the Windows dark-mode title bar API
+
+### v1.1.0
+- Multiple capture modes (region, fullscreen, active window, repeat last)
+- Configurable hotkeys, output formats, capture delay, magnifier, preview thumbnail
+- Full settings UI with tabbed panels and toggle switches
+- Recent captures history in tray menu
+- Start with Windows toggle
+
+### v1.0.0
+- Initial release — region capture, path to clipboard, system tray
 
 ## License
 

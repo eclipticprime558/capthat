@@ -8,7 +8,9 @@ and the file path lands on your clipboard — paste it straight into Claude Code
 Dependencies:  pip install pillow keyboard pyperclip pystray plyer
 """
 
+import glob
 import os
+import subprocess
 import sys
 import json
 import re
@@ -27,10 +29,22 @@ import keyboard
 import pyperclip
 import pystray
 import tkinter as tk
-from tkinter import ttk, colorchooser
+from tkinter import colorchooser
 
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 APP_NAME = "CaptThat"
+
+_C = {
+    "bg":     "#1C1C1E",
+    "bg2":    "#2C2C2E",
+    "bg3":    "#3A3A3C",
+    "fg":     "#FFFFFF",
+    "fg2":    "#EBEBF5",
+    "fg3":    "#8E8E93",
+    "accent": "#0A84FF",
+    "sep":    "#48484A",
+}
+_FF = "Segoe UI"
 _BASE = os.path.dirname(os.path.abspath(sys.argv[0]))
 CONFIG_PATH = os.path.join(_BASE, "config.json")
 REGISTRY_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
@@ -212,17 +226,17 @@ def _countdown_then(seconds: int, callback):
     win = tk.Toplevel(tk_root)
     win.overrideredirect(True)
     win.attributes("-topmost", True)
-    win.configure(bg="#0f172a")
+    win.configure(bg=_C["bg2"])
     sw = tk_root.winfo_screenwidth()
-    win.geometry(f"240x52+{sw // 2 - 120}+16")
+    win.geometry(f"300x44+{sw // 2 - 150}+20")
 
-    lbl = tk.Label(win, bg="#0f172a", fg="#f8fafc", font=("Segoe UI", 15, "bold"))
+    lbl = tk.Label(win, bg=_C["bg2"], fg=_C["fg"], font=(_FF, 13))
     lbl.pack(expand=True)
 
     n = [seconds]
 
     def tick():
-        lbl.config(text=f"  Capturing in {n[0]}s…  (Esc to cancel)")
+        lbl.config(text=f"Capturing in {n[0]}s  ·  Esc to cancel")
         if n[0] <= 0:
             win.destroy()
             callback()
@@ -385,6 +399,7 @@ def _capture_and_save(x1=None, y1=None, x2=None, y2=None, mode="region"):
             pass
 
 
+
 # ── preview thumbnail ─────────────────────────────────────────────────────────
 
 def _show_preview(img: Image.Image, filepath: str):
@@ -395,33 +410,47 @@ def _show_preview(img: Image.Image, filepath: str):
     win = tk.Toplevel(tk_root)
     win.overrideredirect(True)
     win.attributes("-topmost", True)
+    win.configure(bg=_C["bg2"])
 
     pw, ph = photo.width(), photo.height()
-    bar_h = 28
+    bar_h = 36
     sw = tk_root.winfo_screenwidth()
     sh = tk_root.winfo_screenheight()
-    wx = sw - pw - 16
-    wy = sh - ph - bar_h - 48  # above taskbar
+    wx = sw - pw - 20
+    wy = sh - ph - bar_h - 56
 
     win.geometry(f"{pw}x{ph + bar_h}+{wx}+{wy}")
-    win.configure(bg="#0f172a")
 
-    canvas = tk.Canvas(win, width=pw, height=ph, highlightthickness=0, bg="#0f172a")
+    canvas = tk.Canvas(win, width=pw, height=ph, highlightthickness=0, bg="#000000")
     canvas.pack()
     canvas.create_image(0, 0, image=photo, anchor="nw")
     canvas._keep = photo
 
-    bar = tk.Frame(win, bg="#1e293b", height=bar_h)
+    bar = tk.Frame(win, bg=_C["bg2"], height=bar_h)
     bar.pack(fill=tk.X)
-    tk.Label(bar, text="Click to open  •  path on clipboard",
-             bg="#1e293b", fg="#94a3b8", font=("Segoe UI", 8)).pack(side=tk.LEFT, padx=6)
+    tk.Label(bar, text="Path copied  ·  Click to open",
+             bg=_C["bg2"], fg=_C["fg3"], font=(_FF, 10)).pack(
+        side=tk.LEFT, padx=12, pady=8)
 
     def open_it(e=None):
         os.startfile(filepath)
         win.destroy()
 
-    win.bind("<Button-1>", open_it)
-    canvas.bind("<Button-1>", open_it)
+    def show_rc_menu(e):
+        m = tk.Menu(win, tearoff=0, bg=_C["bg2"], fg=_C["fg"],
+                    activebackground=_C["accent"], activeforeground="white",
+                    relief="flat", bd=0, font=(_FF, 11))
+        m.add_command(label="Open file", command=open_it)
+        m.add_separator()
+        m.add_command(label="Settings…", command=lambda: (win.destroy(), open_settings()))
+        try:
+            m.tk_popup(e.x_root, e.y_root)
+        finally:
+            m.grab_release()
+
+    for w in (win, canvas, bar):
+        w.bind("<Button-1>", open_it)
+        w.bind("<Button-3>", show_rc_menu)
 
     dur = int(float(config.get("preview_duration", 2.5)) * 1000)
     win.after(dur, lambda: win.destroy() if win.winfo_exists() else None)
@@ -453,12 +482,11 @@ def show_overlay():
     canvas.create_image(0, 0, image=dark_photo, anchor="nw")
     canvas._keep = dark_photo
 
-    # Hint bar
-    canvas.create_rectangle(0, 0, sw, 46, fill="#0f172a", outline="")
+    canvas.create_rectangle(0, 0, sw, 46, fill=_C["bg"], outline="")
     canvas.create_text(
         sw // 2, 23,
-        text="Drag to select region  •  Esc to cancel  •  Path will be copied for Claude Code",
-        fill="#64748b", font=("Segoe UI", 11),
+        text="Drag to select a region  ·  Esc to cancel  ·  Path copies to clipboard",
+        fill=_C["fg3"], font=(_FF, 11),
     )
 
     cc = config.get("crosshair_color", "#38bdf8")
@@ -540,15 +568,62 @@ def show_overlay():
         _overlay_open = False
         win.destroy()
 
+    def on_destroy(e=None):
+        global _overlay_open
+        if e and e.widget is win:
+            _overlay_open = False
+
     canvas.bind("<ButtonPress-1>", on_press)
     canvas.bind("<B1-Motion>", on_drag)
     canvas.bind("<Motion>", on_motion)
     canvas.bind("<ButtonRelease-1>", on_release)
     win.bind("<Escape>", on_cancel)
+    win.bind("<Destroy>", on_destroy)
     win.focus_force()
 
 
 # ── settings window ───────────────────────────────────────────────────────────
+
+def _dark_title_bar(win):
+    try:
+        win.update()
+        hwnd = ctypes.windll.user32.GetParent(win.winfo_id()) or win.winfo_id()
+        ctypes.windll.dwmapi.DwmSetWindowAttribute(
+            hwnd, 20, ctypes.byref(ctypes.c_int(1)), 4)
+    except Exception:
+        pass
+
+
+class _Toggle(tk.Canvas):
+    W, H = 44, 26
+
+    def __init__(self, parent, variable, row=None, col=None, bg_color=None, **kw):
+        bg_color = bg_color or _C["bg2"]
+        super().__init__(parent, width=self.W, height=self.H,
+                         bg=bg_color, highlightthickness=0, cursor="hand2", **kw)
+        self._var = variable
+        variable.trace_add("write", lambda *_: self._draw())
+        self.bind("<Button-1>", lambda _: self._var.set(not self._var.get()))
+        if row is not None:
+            self.grid(row=row, column=col if col is not None else 1,
+                      padx=12, pady=8, sticky="e")
+        self._draw()
+
+    def _draw(self):
+        self.delete("all")
+        on = bool(self._var.get())
+        track = _C["accent"] if on else _C["bg3"]
+        r = self.H // 2
+        self.create_arc(0, 0, self.H, self.H, start=90, extent=180,
+                        fill=track, outline="")
+        self.create_arc(self.W - self.H, 0, self.W, self.H, start=270, extent=180,
+                        fill=track, outline="")
+        self.create_rectangle(r, 0, self.W - r, self.H, fill=track, outline="")
+        p = 3
+        x = self.W - self.H + p if on else p
+        ks = self.H - p * 2
+        self.create_oval(x, p, x + ks, p + ks, fill="white", outline="")
+
 
 def open_settings(icon=None, item=None):
     main_queue.put(_show_settings)
@@ -556,98 +631,179 @@ def open_settings(icon=None, item=None):
 
 def _show_settings():
     win = tk.Toplevel(tk_root)
-    win.title(f"CaptThat {VERSION} — Settings")
-    win.geometry("480x420")
+    win.title("CaptThat  ·  Settings")
+    win.geometry("520x490")
     win.resizable(False, False)
+    win.configure(bg=_C["bg"])
     win.attributes("-topmost", True)
     win.focus_force()
+    _dark_title_bar(win)
 
-    nb = ttk.Notebook(win)
-    nb.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
+    TABS = ["Hotkeys", "Output", "Capture", "After Capture", "System"]
 
-    def tab(label):
-        f = ttk.Frame(nb, padding=16)
-        nb.add(f, text=f"  {label}  ")
-        return f
+    # Tab bar
+    tab_bar = tk.Frame(win, bg=_C["bg2"], height=48)
+    tab_bar.pack(fill=tk.X)
+    tab_bar.pack_propagate(False)
 
-    def row(parent, r, label, widget_fn, col_span=1):
-        ttk.Label(parent, text=label).grid(row=r, column=0, sticky="w", pady=5)
-        w = widget_fn(parent)
-        w.grid(row=r, column=1, columnspan=col_span, sticky="w", padx=10)
-        return w
+    # Content area
+    content = tk.Frame(win, bg=_C["bg"])
+    content.pack(fill=tk.BOTH, expand=True, padx=24, pady=16)
 
-    def entry(parent, var, width=26):
-        return ttk.Entry(parent, textvariable=var, width=width)
+    # Button bar
+    btn_bar = tk.Frame(win, bg=_C["bg"], height=60)
+    btn_bar.pack(fill=tk.X, padx=24)
+    btn_bar.pack_propagate(False)
 
-    def check(parent, var, text=""):
-        return ttk.Checkbutton(parent, variable=var, text=text)
+    panels: dict = {}
+    tab_btns: dict = {}
 
-    # ── Tab 1: Hotkeys ──────────────────────────────────────────────────────
-    t1 = tab("Hotkeys")
-    hk_region   = tk.StringVar(value=config.get("hotkey_region", ""))
-    hk_full     = tk.StringVar(value=config.get("hotkey_fullscreen", ""))
-    hk_window   = tk.StringVar(value=config.get("hotkey_window", ""))
-    hk_repeat   = tk.StringVar(value=config.get("hotkey_repeat", ""))
+    def switch(name):
+        for t, b in tab_btns.items():
+            b.configure(bg=_C["accent"] if t == name else _C["bg2"],
+                        fg="white" if t == name else _C["fg3"])
+        for t, p in panels.items():
+            if t == name:
+                p.pack(fill=tk.BOTH, expand=True)
+            else:
+                p.pack_forget()
 
-    row(t1, 0, "Region capture:",      lambda p: entry(p, hk_region))
-    row(t1, 1, "Full screen:",         lambda p: entry(p, hk_full))
-    row(t1, 2, "Active window:",       lambda p: entry(p, hk_window))
-    row(t1, 3, "Repeat last region:",  lambda p: entry(p, hk_repeat))
-    ttk.Label(t1, text="Key names: print screen · ctrl+f9 · alt+shift+s",
-              foreground="#888").grid(row=4, column=0, columnspan=2, sticky="w", pady=(12, 0))
+    for name in TABS:
+        b = tk.Label(tab_bar, text=name, font=(_FF, 11),
+                     bg=_C["bg2"], fg=_C["fg3"],
+                     padx=14, cursor="hand2")
+        b.pack(side=tk.LEFT, fill=tk.Y)
+        b.bind("<Button-1>", lambda e, n=name: switch(n))
+        tab_btns[name] = b
 
-    # ── Tab 2: Output ───────────────────────────────────────────────────────
-    t2 = tab("Output")
-    out_dir_var  = tk.StringVar(value=config.get("output_dir", ""))
-    fmt_var      = tk.StringVar(value=config.get("format", "png"))
-    quality_var  = tk.IntVar(value=int(config.get("jpeg_quality", 92)))
-    unique_var   = tk.BooleanVar(value=config.get("unique_names", False))
-    pattern_var  = tk.StringVar(value=config.get("name_pattern", "{date}_{time}"))
-    history_var  = tk.StringVar(value=str(config.get("history_count", 10)))
+    # ── Shared helpers ────────────────────────────────────────────────────────
+    def section_lbl(parent, row, text, span=2):
+        tk.Label(parent, text=text, font=(_FF, 11), bg=_C["bg"],
+                 fg=_C["fg3"], anchor="w").grid(
+            row=row, column=0, columnspan=span, sticky="w", pady=(12, 3))
 
-    row(t2, 0, "Output folder:", lambda p: entry(p, out_dir_var, 30))
+    def field_entry(parent, row, var, span=2):
+        e = tk.Entry(parent, textvariable=var, font=(_FF, 12),
+                     bg=_C["bg2"], fg=_C["fg"], insertbackground=_C["fg"],
+                     relief="flat", highlightthickness=1,
+                     highlightbackground=_C["sep"], highlightcolor=_C["accent"])
+        e.grid(row=row, column=0, columnspan=span, sticky="ew", pady=(0, 2), ipady=7)
+        return e
 
-    row(t2, 1, "Format:", lambda p: ttk.Combobox(
-        p, textvariable=fmt_var, values=["png", "jpeg", "webp"], width=10, state="readonly"))
+    def hint_lbl(parent, row, text):
+        tk.Label(parent, text=text, font=(_FF, 10), bg=_C["bg"],
+                 fg=_C["fg3"], anchor="w").grid(
+            row=row, column=0, columnspan=2, sticky="w", pady=(0, 4))
 
-    qual_frame = ttk.Frame(t2)
-    qual_frame.grid(row=2, column=1, sticky="w", padx=10)
-    ttk.Label(t2, text="JPEG/WebP quality:").grid(row=2, column=0, sticky="w", pady=5)
-    ttk.Scale(qual_frame, variable=quality_var, from_=1, to=100,
-              orient=tk.HORIZONTAL, length=160).pack(side=tk.LEFT)
-    ttk.Label(qual_frame, textvariable=quality_var, width=3).pack(side=tk.LEFT, padx=4)
+    def toggle_row(parent, row, label, var):
+        f = tk.Frame(parent, bg=_C["bg2"])
+        f.grid(row=row, column=0, columnspan=2, sticky="ew", pady=3)
+        f.columnconfigure(0, weight=1)
+        tk.Label(f, text=label, font=(_FF, 12), bg=_C["bg2"],
+                 fg=_C["fg"], anchor="w").grid(
+            row=0, column=0, sticky="w", padx=12, pady=8)
+        t = _Toggle(f, var, bg_color=_C["bg2"])
+        t.grid(row=0, column=1, padx=12, pady=8)
+        f.bind("<Button-1>", lambda _: var.set(not var.get()))
 
-    row(t2, 3, "Filename mode:",
-        lambda p: ttk.Checkbutton(p, variable=unique_var, text="Unique names (pattern below)"))
-    row(t2, 4, "Name pattern:", lambda p: entry(p, pattern_var, 24))
-    ttk.Label(t2, text="Tokens: {date} {time} {ms} {counter} {title}",
-              foreground="#888").grid(row=5, column=0, columnspan=2, sticky="w", pady=(2, 0))
-    row(t2, 6, "History size:", lambda p: ttk.Spinbox(p, from_=1, to=50, textvariable=history_var, width=6))
+    def spinbox_widget(parent, row, var, from_, to, col=1, inc=1.0):
+        s = tk.Spinbox(parent, from_=from_, to=to, increment=inc,
+                       textvariable=var, width=7,
+                       font=(_FF, 12), bg=_C["bg2"], fg=_C["fg"],
+                       buttonbackground=_C["bg3"], relief="flat",
+                       highlightthickness=1, highlightbackground=_C["sep"],
+                       highlightcolor=_C["accent"], insertbackground=_C["fg"])
+        s.grid(row=row, column=col, sticky="w", padx=(10, 0), pady=4)
+        return s
 
-    # ── Tab 3: Capture ──────────────────────────────────────────────────────
-    t3 = tab("Capture")
+    def slider_row(parent, row, label, var, from_, to):
+        tk.Label(parent, text=label, font=(_FF, 11), bg=_C["bg"],
+                 fg=_C["fg3"], anchor="w").grid(row=row, column=0, sticky="w", pady=(10, 3))
+        f = tk.Frame(parent, bg=_C["bg"])
+        f.grid(row=row, column=1, sticky="w", padx=(10, 0), pady=(10, 3))
+        tk.Scale(f, variable=var, from_=from_, to=to, orient=tk.HORIZONTAL,
+                 length=150, bg=_C["bg"], fg=_C["fg"], troughcolor=_C["bg3"],
+                 activebackground=_C["accent"], highlightthickness=0,
+                 sliderrelief="flat", bd=0, sliderlength=18).pack(side=tk.LEFT)
+
+    def option_menu(parent, row, var, values, col=1):
+        om = tk.OptionMenu(parent, var, *values)
+        om.configure(bg=_C["bg2"], fg=_C["fg"], relief="flat", bd=0,
+                     font=(_FF, 12), highlightthickness=0,
+                     activebackground=_C["accent"], activeforeground="white")
+        om["menu"].configure(bg=_C["bg2"], fg=_C["fg"],
+                             activebackground=_C["accent"], activeforeground="white", bd=0)
+        om.grid(row=row, column=col, sticky="w", padx=(10, 0), pady=4)
+        return om
+
+    # ── Hotkeys panel ─────────────────────────────────────────────────────────
+    p1 = tk.Frame(content, bg=_C["bg"])
+    panels["Hotkeys"] = p1
+    p1.columnconfigure(0, weight=1)
+
+    hk_region = tk.StringVar(value=config.get("hotkey_region", ""))
+    hk_full   = tk.StringVar(value=config.get("hotkey_fullscreen", ""))
+    hk_window = tk.StringVar(value=config.get("hotkey_window", ""))
+    hk_repeat = tk.StringVar(value=config.get("hotkey_repeat", ""))
+
+    for i, (label, var) in enumerate([
+        ("Region capture", hk_region),
+        ("Full screen", hk_full),
+        ("Active window", hk_window),
+        ("Repeat last region", hk_repeat),
+    ]):
+        section_lbl(p1, i * 2, label)
+        field_entry(p1, i * 2 + 1, var)
+    hint_lbl(p1, 8, "Examples: print screen  ·  ctrl+f9  ·  alt+shift+s")
+
+    # ── Output panel ──────────────────────────────────────────────────────────
+    p2 = tk.Frame(content, bg=_C["bg"])
+    panels["Output"] = p2
+    p2.columnconfigure(0, weight=1)
+    p2.columnconfigure(1, weight=0)
+
+    out_dir_var = tk.StringVar(value=config.get("output_dir", ""))
+    fmt_var     = tk.StringVar(value=config.get("format", "png"))
+    quality_var = tk.IntVar(value=int(config.get("jpeg_quality", 92)))
+    unique_var  = tk.BooleanVar(value=config.get("unique_names", False))
+    pattern_var = tk.StringVar(value=config.get("name_pattern", "{date}_{time}"))
+    history_var = tk.StringVar(value=str(config.get("history_count", 10)))
+
+    section_lbl(p2, 0, "Output folder")
+    field_entry(p2, 1, out_dir_var)
+    section_lbl(p2, 2, "Format", span=1)
+    option_menu(p2, 2, fmt_var, ["png", "jpeg", "webp"])
+    slider_row(p2, 3, "JPEG/WebP quality", quality_var, 1, 100)
+    toggle_row(p2, 4, "Unique filenames", unique_var)
+    section_lbl(p2, 5, "Name pattern")
+    field_entry(p2, 6, pattern_var)
+    hint_lbl(p2, 7, "Tokens: {date}  {time}  {ms}  {counter}  {title}")
+    section_lbl(p2, 8, "History size", span=1)
+    spinbox_widget(p2, 8, history_var, 1, 50)
+
+    # ── Capture panel ─────────────────────────────────────────────────────────
+    p3 = tk.Frame(content, bg=_C["bg"])
+    panels["Capture"] = p3
+    p3.columnconfigure(0, weight=1)
+    p3.columnconfigure(1, weight=0)
+
     delay_var   = tk.StringVar(value=str(config.get("capture_delay", 0)))
     cursor_var  = tk.BooleanVar(value=config.get("include_cursor", False))
     magnif_var  = tk.BooleanVar(value=config.get("show_magnifier", True))
     opacity_var = tk.DoubleVar(value=float(config.get("overlay_opacity", 0.45)))
     cc_var      = tk.StringVar(value=config.get("crosshair_color", "#38bdf8"))
 
-    row(t3, 0, "Capture delay (sec):",
-        lambda p: ttk.Spinbox(p, from_=0, to=10, textvariable=delay_var, width=6))
-    row(t3, 1, "Include cursor:", lambda p: check(p, cursor_var))
-    row(t3, 2, "Show magnifier:", lambda p: check(p, magnif_var))
+    section_lbl(p3, 0, "Capture delay (sec)", span=1)
+    spinbox_widget(p3, 0, delay_var, 0, 10)
+    toggle_row(p3, 1, "Include cursor in capture", cursor_var)
+    toggle_row(p3, 2, "Show magnifier overlay", magnif_var)
+    slider_row(p3, 3, "Overlay opacity", opacity_var, 0.1, 0.9)
+    section_lbl(p3, 4, "Crosshair color", span=1)
 
-    ttk.Label(t3, text="Overlay opacity:").grid(row=3, column=0, sticky="w", pady=5)
-    op_frame = ttk.Frame(t3)
-    op_frame.grid(row=3, column=1, sticky="w", padx=10)
-    ttk.Scale(op_frame, variable=opacity_var, from_=0.1, to=0.9,
-              orient=tk.HORIZONTAL, length=160).pack(side=tk.LEFT)
-
-    ttk.Label(t3, text="Crosshair color:").grid(row=4, column=0, sticky="w", pady=5)
-    cc_frame = ttk.Frame(t3)
-    cc_frame.grid(row=4, column=1, sticky="w", padx=10)
-    cc_swatch = tk.Label(cc_frame, bg=cc_var.get(), width=4, relief="solid")
-    cc_swatch.pack(side=tk.LEFT, padx=(0, 6))
+    cc_row = tk.Frame(p3, bg=_C["bg"])
+    cc_row.grid(row=4, column=1, sticky="w", padx=(10, 0), pady=(10, 3))
+    cc_swatch = tk.Label(cc_row, bg=cc_var.get(), width=3, relief="flat")
+    cc_swatch.pack(side=tk.LEFT, padx=(0, 8))
 
     def pick_color():
         result = colorchooser.askcolor(color=cc_var.get(), parent=win, title="Crosshair Color")
@@ -655,34 +811,42 @@ def _show_settings():
             cc_var.set(result[1])
             cc_swatch.configure(bg=result[1])
 
-    ttk.Button(cc_frame, text="Choose…", command=pick_color).pack(side=tk.LEFT)
+    tk.Button(cc_row, text="Choose…", command=pick_color,
+              bg=_C["bg3"], fg=_C["fg"], relief="flat", bd=0,
+              font=(_FF, 11), padx=10, pady=4, cursor="hand2",
+              activebackground=_C["accent"], activeforeground="white").pack(side=tk.LEFT)
 
-    # ── Tab 4: After Capture ────────────────────────────────────────────────
-    t4 = tab("After Capture")
+    # ── After Capture panel ───────────────────────────────────────────────────
+    p4 = tk.Frame(content, bg=_C["bg"])
+    panels["After Capture"] = p4
+    p4.columnconfigure(0, weight=1)
+    p4.columnconfigure(1, weight=0)
+
     copy_img_var  = tk.BooleanVar(value=config.get("copy_image_to_clipboard", False))
     preview_var   = tk.BooleanVar(value=config.get("show_preview", True))
     prev_dur_var  = tk.StringVar(value=str(config.get("preview_duration", 2.5)))
     auto_open_var = tk.BooleanVar(value=config.get("auto_open", False))
 
-    row(t4, 0, "Also copy image to clipboard:",
-        lambda p: check(p, copy_img_var))
-    ttk.Label(t4, text="(so you can also paste the image, not just the path)",
-              foreground="#888").grid(row=1, column=0, columnspan=2, sticky="w", pady=(0, 8))
-    row(t4, 2, "Show preview thumbnail:", lambda p: check(p, preview_var))
-    row(t4, 3, "Preview duration (sec):",
-        lambda p: ttk.Spinbox(p, from_=0.5, to=10, increment=0.5,
-                              textvariable=prev_dur_var, width=6))
-    row(t4, 4, "Auto-open after capture:", lambda p: check(p, auto_open_var))
+    toggle_row(p4, 0, "Also copy image to clipboard", copy_img_var)
+    hint_lbl(p4, 1, "Lets you paste the image directly into Slack, Word, etc.")
+    toggle_row(p4, 2, "Show preview thumbnail", preview_var)
+    section_lbl(p4, 3, "Preview duration (sec)", span=1)
+    spinbox_widget(p4, 3, prev_dur_var, 0.5, 10, inc=0.5)
+    toggle_row(p4, 4, "Auto-open after capture", auto_open_var)
 
-    # ── Tab 5: System ───────────────────────────────────────────────────────
-    t5 = tab("System")
+    # ── System panel ──────────────────────────────────────────────────────────
+    p5 = tk.Frame(content, bg=_C["bg"])
+    panels["System"] = p5
+    p5.columnconfigure(0, weight=1)
+
     startup_var = tk.BooleanVar(value=_startup_enabled())
+    toggle_row(p5, 0, "Start with Windows", startup_var)
+    tk.Label(p5, text=f"Version {VERSION}", font=(_FF, 11),
+             bg=_C["bg"], fg=_C["fg3"]).grid(row=1, column=0, sticky="w", pady=(28, 0))
+    tk.Label(p5, text="github.com/eclipticprime558/capthat", font=(_FF, 10),
+             bg=_C["bg"], fg=_C["fg3"]).grid(row=2, column=0, sticky="w", pady=(2, 0))
 
-    row(t5, 0, "Start with Windows:", lambda p: check(p, startup_var))
-    ttk.Label(t5, text=f"Version {VERSION}  •  github.com/eclipticprime558/capthat",
-              foreground="#888").grid(row=5, column=0, columnspan=2, sticky="w", pady=(30, 0))
-
-    # ── Save / Cancel ───────────────────────────────────────────────────────
+    # ── Save / Cancel ─────────────────────────────────────────────────────────
     def save():
         config["hotkey_region"]           = hk_region.get().strip()
         config["hotkey_fullscreen"]       = hk_full.get().strip()
@@ -708,10 +872,16 @@ def _show_settings():
         register_hotkeys()
         win.destroy()
 
-    btn_frame = ttk.Frame(win)
-    btn_frame.pack(pady=(0, 10))
-    ttk.Button(btn_frame, text="Save", command=save).pack(side=tk.LEFT, padx=6)
-    ttk.Button(btn_frame, text="Cancel", command=win.destroy).pack(side=tk.LEFT, padx=6)
+    tk.Button(btn_bar, text="Cancel", command=win.destroy,
+              bg=_C["bg3"], fg=_C["fg"], relief="flat", bd=0,
+              font=(_FF, 12), padx=20, pady=8, cursor="hand2",
+              activebackground=_C["sep"], activeforeground="white").pack(side=tk.LEFT, pady=10)
+    tk.Button(btn_bar, text="Save", command=save,
+              bg=_C["accent"], fg="white", relief="flat", bd=0,
+              font=(_FF, 12, "bold"), padx=24, pady=8, cursor="hand2",
+              activebackground="#0070E0", activeforeground="white").pack(side=tk.RIGHT, pady=10)
+
+    switch("Hotkeys")
 
 
 # ── notification ──────────────────────────────────────────────────────────────
@@ -728,42 +898,170 @@ def _notify(msg: str):
 # ── tray icon image ───────────────────────────────────────────────────────────
 
 def _make_icon(size: int = 64) -> Image.Image:
-    s = size
+    scale = 8  # 8× supersampling for crisp antialiasing at every output size
+    s = size * scale
+
+    # Background gradient #1085FF → #0055CC (vivid top, deep bottom)
+    bg = Image.new("RGB", (s, s))
+    dg = ImageDraw.Draw(bg)
+    for y in range(s):
+        t = y / max(s - 1, 1)
+        dg.line([(0, y), (s - 1, y)], fill=(
+            int(0x10 + (0x00 - 0x10) * t),
+            int(0x85 + (0x55 - 0x85) * t),
+            int(0xFF + (0xCC - 0xFF) * t),
+        ))
+
+    # Squircle mask
+    mask = Image.new("L", (s, s), 0)
+    ImageDraw.Draw(mask).rounded_rectangle(
+        [0, 0, s - 1, s - 1], radius=s * 22 // 100, fill=255)
+
     img = Image.new("RGBA", (s, s), (0, 0, 0, 0))
+    img.paste(bg, mask=mask)
     d = ImageDraw.Draw(img)
-    pad = max(2, s // 12)
-    top = s * 28 // 100
-    bot = s * 88 // 100
-    r = max(2, s // 10)
-    d.rounded_rectangle([pad, top, s - pad, bot], radius=r,
-                        fill="#1e293b", outline="#475569", width=max(1, s // 22))
+
+    # Camera body — bold white rounded rect
+    bpad = s * 13 // 100
+    btop = s * 32 // 100
+    bbot = s * 76 // 100
+    d.rounded_rectangle([bpad, btop, s - bpad, bbot],
+                        radius=s * 10 // 100, fill="white")
+
+    # Viewfinder bump — wider notch so it reads at 16px
     vw = s * 26 // 100
-    d.rounded_rectangle([s // 2 - vw // 2, s * 14 // 100,
-                         s // 2 + vw // 2, s * 30 // 100],
-                        radius=max(2, s // 18), fill="#1e293b",
-                        outline="#475569", width=max(1, s // 22))
-    # Flash (orange — Claude accent)
-    fx, fy, fr = s * 72 // 100, s * 35 // 100, max(3, s // 9)
-    d.ellipse([fx - fr, fy - fr, fx + fr, fy + fr], fill="#f97316")
-    # Lens
-    cx, cy = s // 2, s * 58 // 100
-    lr = s * 24 // 100
-    d.ellipse([cx - lr, cy - lr, cx + lr, cy + lr],
-              fill="#0ea5e9", outline="#38bdf8", width=max(1, s // 22))
-    lr2 = s * 14 // 100
-    d.ellipse([cx - lr2, cy - lr2, cx + lr2, cy + lr2], fill="#0284c7")
-    hr = max(2, s // 12)
-    hx, hy = cx - s // 12, cy - s // 12
-    d.ellipse([hx - hr, hy - hr, hx + hr, hy + hr], fill="#bae6fd")
-    return img
+    d.rounded_rectangle(
+        [s // 2 - vw // 2, btop - s * 10 // 100,
+         s // 2 + vw // 2, btop + s * 5 // 100],
+        radius=s * 6 // 100, fill="white")
+
+    # Lens — 3 wide rings so they stay distinct after downsampling
+    #  ring widths at 48 px: outer≈5 px, white≈4 px, center≈3 px
+    cx = s // 2
+    cy = (btop + bbot) // 2 + s * 2 // 100
+    for r, color in [
+        (s * 22 // 100, "#5AC8FA"),  # outer light-blue  (ring = 22-13 = 9%)
+        (s * 13 // 100, "white"),    # white gap          (ring = 13- 7 = 6%)
+        (s *  7 // 100, "#0A84FF"),  # blue center
+    ]:
+        d.ellipse([cx - r, cy - r, cx + r, cy + r], fill=color)
+
+    return img.resize((size, size), Image.LANCZOS)
 
 
 def save_icon_file(path: str):
-    sizes = [16, 24, 32, 48, 64, 128, 256]
-    imgs = [_make_icon(s) for s in sizes]
-    imgs[0].save(path, format="ICO",
-                 sizes=[(s, s) for s in sizes],
-                 append_images=imgs[1:])
+    import struct
+    # Pillow 12.x only saves a single frame via its ICO plugin, so we write the
+    # ICO file manually: modern ICO stores each size as a raw PNG blob.
+    sizes = [16, 24, 32, 48, 64, 96, 128, 256]
+    pngs = []
+    for sz in sizes:
+        buf = BytesIO()
+        _make_icon(sz).save(buf, format="PNG")
+        pngs.append(buf.getvalue())
+
+    n = len(sizes)
+    dir_offset = 6 + n * 16          # byte offset where image data starts
+    offsets = []
+    cur = dir_offset
+    for data in pngs:
+        offsets.append(cur)
+        cur += len(data)
+
+    out = BytesIO()
+    out.write(struct.pack("<HHH", 0, 1, n))   # ICO header
+    for sz, data, off in zip(sizes, pngs, offsets):
+        w = h = sz if sz < 256 else 0         # 0 encodes 256 in ICO spec
+        out.write(struct.pack("<BBBBHHII", w, h, 0, 0, 1, 32, len(data), off))
+    for data in pngs:
+        out.write(data)
+
+    with open(path, "wb") as f:
+        f.write(out.getvalue())
+
+    # Tell Windows Explorer to flush its icon cache for this file
+    try:
+        SHCNE_UPDATEITEM = 0x00002000
+        SHCNF_PATHW      = 0x0005
+        ctypes.windll.shell32.SHChangeNotify(
+            SHCNE_UPDATEITEM, SHCNF_PATHW,
+            ctypes.c_wchar_p(os.path.abspath(path)), None)
+    except Exception:
+        pass
+
+
+def _sync_desktop_shortcuts(ico_path: str):
+    """
+    Ensure the desktop shows the freshly generated icon.
+
+    * Existing .lnk shortcuts → update IconLocation.
+    * CaptThat.exe sitting directly on the desktop (no shortcut yet) → create a
+      .lnk beside it so the icon can be overridden without patching the EXE.
+    """
+    ico_abs = os.path.abspath(ico_path)
+    desktops = [
+        os.path.join(os.environ.get("USERPROFILE", ""), "Desktop"),
+        os.path.join(os.environ.get("PUBLIC", r"C:\Users\Public"), "Desktop"),
+    ]
+
+    shortcuts: list = []
+    for d in desktops:
+        shortcuts += glob.glob(os.path.join(d, "*[Cc]apt[Tt]hat*.lnk"))
+
+    # If the EXE sits bare on the desktop with no shortcut, create one
+    for d in desktops:
+        exe_on_desktop = os.path.join(d, "CaptThat.exe")
+        lnk_on_desktop = os.path.join(d, "CaptThat.lnk")
+        if os.path.exists(exe_on_desktop) and lnk_on_desktop not in shortcuts:
+            env = os.environ.copy()
+            env["CT_LNK"] = lnk_on_desktop
+            env["CT_TGT"] = exe_on_desktop
+            env["CT_ICO"] = ico_abs
+            ps = (
+                "$s=(New-Object -ComObject WScript.Shell).CreateShortcut($env:CT_LNK);"
+                "$s.TargetPath=$env:CT_TGT;"
+                "$s.IconLocation=$env:CT_ICO+',0';"
+                "$s.Save()"
+            )
+            try:
+                subprocess.run(
+                    ["powershell", "-NonInteractive", "-NoProfile", "-Command", ps],
+                    capture_output=True, timeout=8, env=env,
+                )
+                shortcuts.append(lnk_on_desktop)
+            except Exception:
+                pass
+
+    if not shortcuts:
+        return
+
+    # Update IconLocation on all shortcuts
+    env = os.environ.copy()
+    env["CT_ICO"] = ico_abs
+    ps = (
+        "$s=(New-Object -ComObject WScript.Shell).CreateShortcut($env:CT_LNK);"
+        "$s.IconLocation=$env:CT_ICO+',0';"
+        "$s.Save()"
+    )
+    for lnk in shortcuts:
+        env["CT_LNK"] = lnk
+        try:
+            subprocess.run(
+                ["powershell", "-NonInteractive", "-NoProfile", "-Command", ps],
+                capture_output=True, timeout=8, env=env,
+            )
+        except Exception:
+            pass
+
+    # Notify Explorer to repaint immediately
+    SHCNE_UPDATEITEM = 0x00002000
+    SHCNF_PATHW = 0x0005
+    for lnk in shortcuts:
+        try:
+            ctypes.windll.shell32.SHChangeNotify(
+                SHCNE_UPDATEITEM, SHCNF_PATHW, ctypes.c_wchar_p(lnk), None)
+        except Exception:
+            pass
 
 
 # ── tray menu ─────────────────────────────────────────────────────────────────
@@ -800,21 +1098,32 @@ def _startup_label(icon=None, item=None):
 
 def _run_tray():
     global tray_icon
-    menu = pystray.Menu(
-        pystray.MenuItem("Capture Region",       capture_now, default=True),
-        pystray.MenuItem("Capture Full Screen",  lambda i, it: _trigger_fullscreen()),
-        pystray.MenuItem("Capture Active Window",lambda i, it: _trigger_window()),
-        pystray.MenuItem("Repeat Last Capture",  lambda i, it: _trigger_repeat()),
-        pystray.Menu.SEPARATOR,
-        pystray.MenuItem("Recent Captures",      pystray.Menu(_history_items)),
-        pystray.MenuItem("Open Screenshots Folder", open_screenshots_folder),
-        pystray.Menu.SEPARATOR,
-        pystray.MenuItem("Settings",             open_settings),
-        pystray.MenuItem(_startup_label,         _toggle_startup),
-        pystray.Menu.SEPARATOR,
-        pystray.MenuItem("Exit",                 lambda icon, item: os._exit(0)),
-    )
-    tray_icon = pystray.Icon(APP_NAME, _make_icon(64), APP_NAME, menu)
+    # Build the menu without a callable submenu — pystray's Windows backend has a
+    # bug where pystray.Menu(callable) as a submenu breaks right-click on the tray
+    # icon entirely.  Recent-captures items are inlined and the menu is rebuilt on
+    # tray_icon.update_menu() (called after each capture) instead.
+    def _build_menu():
+        items = [
+            pystray.MenuItem("Capture Region",        capture_now, default=True),
+            pystray.MenuItem("Capture Full Screen",   lambda i, it: _trigger_fullscreen()),
+            pystray.MenuItem("Capture Active Window", lambda i, it: _trigger_window()),
+            pystray.MenuItem("Repeat Last Capture",   lambda i, it: _trigger_repeat()),
+            pystray.Menu.SEPARATOR,
+        ]
+        items += list(_history_items())
+        items += [
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem("Open Screenshots Folder", open_screenshots_folder),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem("Settings",              open_settings),
+            pystray.MenuItem(_startup_label,          _toggle_startup),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem("Exit",                  lambda icon, item: os._exit(0)),
+        ]
+        return pystray.Menu(*items)
+
+    # 256px source → pystray/Windows scales to tray size; crisp at all DPI settings
+    tray_icon = pystray.Icon(APP_NAME, _make_icon(256), APP_NAME, _build_menu())
     tray_icon.run()
 
 
@@ -834,6 +1143,16 @@ def main():
 
     load_config()
     config["start_with_windows"] = _startup_enabled()
+
+    # Regenerate the .ico in AppData (never next to the EXE, which may be on the desktop)
+    try:
+        _ico_dir = os.path.join(os.environ.get("APPDATA", _BASE), "CaptThat")
+        os.makedirs(_ico_dir, exist_ok=True)
+        _ico_path = os.path.join(_ico_dir, "CaptThat.ico")
+        save_icon_file(_ico_path)
+        _sync_desktop_shortcuts(_ico_path)
+    except Exception:
+        pass
 
     tk_root = tk.Tk()
     tk_root.withdraw()
