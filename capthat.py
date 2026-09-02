@@ -124,7 +124,10 @@ def load_config():
     if os.path.exists(CONFIG_PATH):
         try:
             with open(CONFIG_PATH) as f:
-                config = {**DEFAULT_CONFIG, **json.load(f)}
+                loaded = json.load(f)
+            if "hotkey" in loaded and "hotkey_region" not in loaded:
+                loaded["hotkey_region"] = loaded["hotkey"]  # migrate pre-v1.1 single-hotkey config
+            config = {**DEFAULT_CONFIG, **loaded}
             return
         except Exception:
             pass
